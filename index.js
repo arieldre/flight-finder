@@ -10,6 +10,7 @@ import { searchViaHubs, printConnectionResults } from './lib/connections.js';
 import { calendarSweep, printCalendarResults } from './lib/calendar-sweep.js';
 import { searchHotels } from './adapters/hotels.js';
 import { destByIata } from './lib/destinations.js';
+import { runHealthCheck } from './lib/health-check.js';
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const ask = (q) => new Promise(resolve => rl.question(q, resolve));
@@ -180,6 +181,7 @@ async function main() {
   }
 
   printBanner();
+  runHealthCheck().catch(() => {}); // fire-and-forget, non-blocking
 
   while (true) {
     const query = (await ask(chalk.bold.cyan('  > '))).trim();
