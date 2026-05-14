@@ -11,7 +11,7 @@ import { calendarSweep, printCalendarResults, weekSweep, printWeekSweepResults }
 import { searchHotels } from './adapters/hotels.js';
 import { destByIata } from './lib/destinations.js';
 import { runHealthCheck } from './lib/health-check.js';
-import { addAlert, listAlerts, deleteAlert, checkAlerts, checkPriceAgainstAlerts } from './lib/alerts.js';
+import { addAlert, listAlerts, deleteAlert, checkAlerts, checkPriceAgainstAlerts, clearTriggered } from './lib/alerts.js';
 import { searchMultiCity, printMultiCityResults } from './lib/multi-city.js';
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -43,6 +43,13 @@ function handleAlertCommand(query, params) {
   // list alerts
   if (ALERT_LIST_RE.test(query)) {
     printAlerts(listAlerts());
+    return true;
+  }
+
+  // clear triggered alerts
+  if (/^(clear|reset)\s+(triggered\s+)?alerts?/i.test(query)) {
+    const n = clearTriggered();
+    console.log(chalk.gray(`  ${n} triggered alert(s) cleared.\n`));
     return true;
   }
 
