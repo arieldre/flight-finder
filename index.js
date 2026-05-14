@@ -11,7 +11,7 @@ import { calendarSweep, printCalendarResults, weekSweep, printWeekSweepResults }
 import { searchHotels } from './adapters/hotels.js';
 import { destByIata } from './lib/destinations.js';
 import { runHealthCheck } from './lib/health-check.js';
-import { addAlert, listAlerts, deleteAlert, checkAlerts, checkPriceAgainstAlerts, clearTriggered } from './lib/alerts.js';
+import { addAlert, listAlerts, deleteAlert, checkAlerts, checkPriceAgainstAlerts, clearTriggered, resetAlert } from './lib/alerts.js';
 import { searchMultiCity, printMultiCityResults } from './lib/multi-city.js';
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -46,10 +46,18 @@ function handleAlertCommand(query, params) {
     return true;
   }
 
-  // clear triggered alerts
-  if (/^(clear|reset)\s+(triggered\s+)?alerts?/i.test(query)) {
+  // clear triggered alerts (delete them)
+  if (/^clear\s+(triggered\s+)?alerts?/i.test(query)) {
     const n = clearTriggered();
     console.log(chalk.gray(`  ${n} triggered alert(s) cleared.\n`));
+    return true;
+  }
+
+  // reset alert N (re-arm so it can fire again)
+  const resetMatch = query.match(/^reset\s+alert\s+(\d+)/i);
+  if (resetMatch) {
+    resetAlert(Number(resetMatch[1]));
+    console.log(chalk.gray(`  Alert #${resetMatch[1]} reset — will fire again.\n`));
     return true;
   }
 
