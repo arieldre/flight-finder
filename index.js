@@ -11,11 +11,79 @@ import { calendarSweep, printCalendarResults, weekSweep, printWeekSweepResults }
 import { searchHotels } from './adapters/hotels.js';
 import { destByIata } from './lib/destinations.js';
 import { runHealthCheck } from './lib/health-check.js';
+import { addAlert, listAlerts, deleteAlert, checkAlerts, checkPriceAgainstAlerts } from './lib/alerts.js';
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const ask = (q) => new Promise(resolve => rl.question(q, resolve));
 
 const SORT_MODES = { '1': 'cheapest', '2': 'fastest', '3': 'best' };
+
+// Alert intent patterns
+const ALERT_SET_RE   = /alert|notify|tell me when|watch/i;
+const ALERT_LIST_RE  = /^(list|show)\s+alerts?/i;
+const ALERT_DEL_RE   = /^(delete|remove)\s+alert\s+(\d+)/i;
+const THRESHOLD_RE   = /(?:below|under|drops?\s+to|less\s+than)\s*\$?(\d+)/i;
+const IATA_PAIR_RE   = /\b([A-Z]{3})\s*[-→>]+\s*([A-Z]{3})\b/;
+
+function printAlerts(alerts) {
+  if (!alerts.length) { console.log(chalk.gray('  No active alerts.\n')); return; }
+  console.log(chalk.bold('\n  Active price alerts:\n'));
+  alerts.forEach(a => {
+    const fired = a.triggered_at ? chalk.green(' ✓ TRIGGERED') : '';
+    console.log(
+      `  ${chalk.cyan(`#${a.id}`)}  ${chalk.bold(`${a.origin} → ${a.destination}`)}` +
+      `  below ${chalk.yellow('$' + a.threshold)}${fired}`
+    );
+  });
+  console.log('');
+}
+
+function handleAlertCommand(query, params) {
+  // list alerts
+  if (ALERT_LIST_RE.test(query)) {
+    printAlerts(listAlerts());
+    return true;
+  }
+
+  // delete alert N
+  const delMatch = query.match(ALERT_DEL_RE);
+  if (delMatch) {
+    deleteAlert(Number(delMatch[2]));
+    console.log(chalk.gray(`  Alert #${delMatch[2]} deleted.\n`));
+    return true;
+  }
+
+  // set alert — needs threshold
+  if (ALERT_SET_RE.test(query)) {
+    const threshMatch = query.match(THRESHOLD_RE);
+    if (!threshMatch) return false; // no threshold — let normal parse handle it
+
+    const threshold = Number(threshMatch[1]);
+    let origin = 'TLV';
+    let destination = null;
+
+    // Try explicit IATA pair first
+    const iataMatch = query.toUpperCase().match(IATA_PAIR_RE);
+    if (iataMatch) {
+      origin = iataMatch[1];
+      destination = iataMatch[2];
+    } else if (params?.origin && params?.destination) {
+      origin = params.origin;
+      destination = params.destination;
+    }
+
+    if (!destination) return false; // can't set alert without destination
+
+    addAlert(origin, destination, threshold);
+    console.log(
+      chalk.green(`  Alert set: ${origin} -> ${destination} below $${threshold}`) +
+      chalk.gray('  (fires next time this route is searched)\n')
+    );
+    return true;
+  }
+
+  return false;
+}
 
 async function pickSortMode() {
   const ans = await ask(
@@ -183,6 +251,18 @@ async function main() {
   printBanner();
   runHealthCheck().catch(() => {}); // fire-and-forget, non-blocking
 
+  // Show any alerts that fired since last run
+  try {
+    const fired = checkAlerts();
+    for (const { alert, currentLowest, median } of fired) {
+      console.log(
+        chalk.bold.green(`  ALERT: ${alert.origin} -> ${alert.destination}`) +
+        chalk.yellow(` $${currentLowest}`) +
+        chalk.gray(` (your target: $${alert.threshold}, recent median: $${median})\n`)
+      );
+    }
+  } catch { /* non-fatal */ }
+
   while (true) {
     const query = (await ask(chalk.bold.cyan('  > '))).trim();
 
@@ -192,6 +272,12 @@ async function main() {
       break;
     }
 
+    // Alert commands — handled before LLM parse
+    if (ALERT_LIST_RE.test(query) || ALERT_DEL_RE.test(query)) {
+      handleAlertCommand(query, null);
+      continue;
+    }
+
     let params;
     try {
       process.stdout.write(chalk.gray('  Parsing...'));
@@ -199,6 +285,12 @@ async function main() {
       process.stdout.write('\r' + ' '.repeat(20) + '\r');
     } catch (e) {
       printError(`Could not understand: ${e.message}`);
+      continue;
+    }
+
+    // Alert set — after parse so we have origin/destination if not in IATA form
+    if (ALERT_SET_RE.test(query) && THRESHOLD_RE.test(query)) {
+      handleAlertCommand(query, params);
       continue;
     }
 
@@ -261,6 +353,17 @@ async function main() {
 
     const result = await runSpecificSearch(params);
     if (!result) continue;
+
+    // Check if any returned price beats an active alert for this route
+    if (result.flights?.length && params.origin && params.destination) {
+      const cheapest = Math.min(...result.flights.map(f => f.price));
+      try {
+        const fired = checkPriceAgainstAlerts(params.origin, params.destination, cheapest);
+        for (const a of fired) {
+          console.log(chalk.bold.green(`  ALERT: ${a.origin} -> ${a.destination} now $${cheapest} (target: $${a.threshold})\n`));
+        }
+      } catch { /* non-fatal */ }
+    }
 
     // Re-sort only applies to direct flight results
     if (result.flights) {
