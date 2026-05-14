@@ -1,4 +1,6 @@
-// Amadeus Flight Offers Search — free developer account at developers.amadeus.com
+// DEPRECATED — Amadeus self-service portal decommissioned July 17, 2026.
+// No new registrations possible. Kept for reference only — not used in active code.
+// Amadeus Flight Offers Search — was: free developer account at developers.amadeus.com
 // Set AMADEUS_CLIENT_ID + AMADEUS_CLIENT_SECRET in .env to activate.
 // Test env: test.api.amadeus.com (real GDS data, rate-limited)
 // Production env: api.amadeus.com (requires approval)
