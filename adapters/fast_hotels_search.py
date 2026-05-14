@@ -41,7 +41,8 @@ def parse_stars(text):
 async def scrape_hotels(city, check_in, check_out, adults, ils_rate, limit=20):
     from playwright.async_api import async_playwright
 
-    slug = city.lower().replace(" ", "-")
+    from urllib.parse import quote
+    slug = quote(city.lower().replace(" ", "-"), safe="")
     url = (
         f"https://www.google.com/travel/hotels/{slug}"
         f"?hl=en&curr=USD&checkin={check_in}&checkout={check_out}&adults={adults}"
@@ -141,12 +142,12 @@ def main():
     raw = sys.stdin.read().strip()
     args = json.loads(raw) if raw else {}
 
-    city      = args.get("city", "Athens")
+    city      = str(args.get("city", "Athens"))[:100]
     check_in  = args.get("checkIn", "")
     check_out = args.get("checkOut", "")
-    adults    = int(args.get("adults", 2))
+    adults    = max(1, min(int(args.get("adults", 2)), 9))
     ils_rate  = float(args.get("ilsRate", 0.274))
-    limit     = int(args.get("limit", 20))
+    limit     = min(int(args.get("limit", 20)), 50)
 
     if not check_in or not check_out:
         json.dump({"error": "checkIn and checkOut required"}, sys.stdout)

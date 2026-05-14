@@ -14,19 +14,25 @@ const { GoogleSearch } = serpApiPkg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HOTEL_SCRIPT = join(__dirname, 'fast_hotels_search.py');
 
-// Cached ILS→USD rate
+// ILS→USD rate — refreshed hourly
 let _ilsRate = null;
+let _ilsRateTs = 0;
 async function getIlsRate() {
-  if (_ilsRate) return _ilsRate;
+  if (_ilsRate && Date.now() - _ilsRateTs < 60 * 60 * 1000) return _ilsRate;
   try {
     const res  = await fetch('https://open.er-api.com/v6/latest/ILS');
     const data = await res.json();
     _ilsRate   = data.rates?.USD ?? 0.274;
+    _ilsRateTs = Date.now();
   } catch {
-    _ilsRate = 0.274;
+    _ilsRate = _ilsRate ?? 0.274;
   }
   return _ilsRate;
 }
+
+// Playwright subprocess concurrency cap — prevents OOM from parallel MCP calls
+let _hotelInFlight = 0;
+const HOTEL_MAX_CONCURRENT = 3;
 
 /**
  * @param {string} city       - City name (e.g. "Athens", "Vienna")
@@ -71,16 +77,24 @@ export async function searchHotels({ city, checkIn, checkOut, adults = 2, maxPri
 // ─── Free Playwright scraper ───────────────────────────────────────────────
 
 async function searchHotelsFree({ city, checkIn, checkOut, adults }) {
+  if (_hotelInFlight >= HOTEL_MAX_CONCURRENT) {
+    throw new Error('hotel-scraper: too many concurrent requests — try again shortly');
+  }
+  _hotelInFlight++;
+
+  // Fetch rate before subprocess timer starts
   const ilsRate = await getIlsRate();
-  const args = JSON.stringify({ city, checkIn, checkOut, adults, ilsRate, limit: 25 });
-  const python = process.platform === 'win32' ? 'python' : 'python3';
+  const safeCityArg = String(city).slice(0, 100);
+  const args = JSON.stringify({ city: safeCityArg, checkIn, checkOut, adults: Math.max(1, Math.min(Number(adults) || 2, 9)), ilsRate, limit: 25 });
+  const python = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
 
   return new Promise((resolve, reject) => {
     const child = execFile(python, [HOTEL_SCRIPT], { timeout: 60000 }, (err, stdout, stderr) => {
-      if (err) { reject(new Error(`playwright-hotels: ${err.message}`)); return; }
+      _hotelInFlight--;
+      if (err) { reject(new Error('Hotel data unavailable')); return; }
       try {
         const data = JSON.parse(stdout);
-        if (data.error) { reject(new Error(`playwright-hotels: ${data.error}`)); return; }
+        if (data.error) { reject(new Error('Hotel data unavailable')); return; }
         if (!Array.isArray(data)) { resolve([]); return; }
 
         // Normalize to same shape as SerpAPI results, sort cheapest first
@@ -102,7 +116,8 @@ async function searchHotelsFree({ city, checkIn, checkOut, adults }) {
 
         resolve(hotels);
       } catch (e) {
-        reject(new Error(`playwright-hotels parse error: ${e.message} — stdout: ${stdout.slice(0, 200)}`));
+        _hotelInFlight--;
+        reject(new Error('Hotel data unavailable'));
       }
     });
     child.stdin.write(args);
@@ -117,7 +132,7 @@ async function searchHotelsSerpApi({ city, checkIn, checkOut, adults }) {
   return new Promise((resolve) => {
     client.json({
       engine:         'google_hotels',
-      q:              `hotels in ${city}`,
+      q:              `hotels in ${String(city).replace(/[^\w\s,'\-]/g, '').slice(0, 100)}`,
       check_in_date:  checkIn,
       check_out_date: checkOut,
       adults,
