@@ -48,7 +48,7 @@ async function runBudgetScan(params) {
 
   let results;
   try {
-    results = await budgetScan({ departDate, returnDate, tripType, adults, budget, flexible, mode });
+    results = await budgetScan({ departDate, returnDate, tripType, adults, budget, flexible, mode, semanticQuery: params.semanticQuery || null });
     process.stdout.write('\r' + ' '.repeat(70) + '\r');
   } catch (e) {
     process.stdout.write('\r' + ' '.repeat(70) + '\r');
