@@ -12,6 +12,7 @@ import { searchHotels } from './adapters/hotels.js';
 import { destByIata } from './lib/destinations.js';
 import { runHealthCheck } from './lib/health-check.js';
 import { addAlert, listAlerts, deleteAlert, checkAlerts, checkPriceAgainstAlerts } from './lib/alerts.js';
+import { searchMultiCity, printMultiCityResults } from './lib/multi-city.js';
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const ask = (q) => new Promise(resolve => rl.question(q, resolve));
@@ -294,7 +295,21 @@ async function main() {
       continue;
     }
 
-    // Week sweep: "cheapest week to fly TLV→Rome in June"
+    // Multi-city: "fly TLV->ROM->BCN->TLV"
+    if (params.mode === 'multi-city' && Array.isArray(params.legs) && params.legs.length >= 2) {
+      console.log(chalk.gray(`\n  Multi-city: ${params.legs.map(l => `${l.origin}->${l.destination}`).join('  ')}\n`));
+      try {
+        const legResults = await searchMultiCity({ legs: params.legs, adults: params.adults || 1 });
+        printMultiCityResults(legResults, params.adults || 1);
+      } catch (e) {
+        printError(e.message);
+      }
+      const next = (await ask(chalk.gray('  [n] new search  [q] quit  > '))).trim().toLowerCase();
+      if (next === 'q') { console.log(chalk.gray('\n  Bye.\n')); rl.close(); process.exit(0); }
+      continue;
+    }
+
+    // Week sweep: "cheapest week to fly TLV->Rome in June"
     if (params.weekSweep && params.origin && params.destination) {
       const results = await weekSweep({
         origin: params.origin || 'TLV',
