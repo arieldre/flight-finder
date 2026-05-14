@@ -8,6 +8,8 @@ import { printBanner, printParsed, printResults, printError } from './lib/displa
 import { budgetScan, printBudgetResults } from './lib/budget-scan.js';
 import { searchViaHubs, printConnectionResults } from './lib/connections.js';
 import { calendarSweep, printCalendarResults } from './lib/calendar-sweep.js';
+import { searchHotels } from './adapters/hotels.js';
+import { destByIata } from './lib/destinations.js';
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const ask = (q) => new Promise(resolve => rl.question(q, resolve));
@@ -38,13 +40,14 @@ async function confirmParams(params) {
 }
 
 async function runBudgetScan(params) {
-  const { budget, departDate, returnDate, tripType, adults, flexible } = params;
+  const { budget, departDate, returnDate, tripType, adults, flexible, mode = 'flights' } = params;
   const combos = flexible ? '3 date combos' : '1 date';
-  process.stdout.write(chalk.gray(`  Scanning destinations × ${combos} from TLV + HFA (cached 24h)...`));
+  const modeLabel = mode === 'trip' ? ' + hotels' : '';
+  process.stdout.write(chalk.gray(`  Scanning destinations × ${combos} from TLV + HFA${modeLabel} (cached 24h)...`));
 
   let results;
   try {
-    results = await budgetScan({ departDate, returnDate, tripType, adults, budget, flexible });
+    results = await budgetScan({ departDate, returnDate, tripType, adults, budget, flexible, mode });
     process.stdout.write('\r' + ' '.repeat(70) + '\r');
   } catch (e) {
     process.stdout.write('\r' + ' '.repeat(70) + '\r');
@@ -52,8 +55,53 @@ async function runBudgetScan(params) {
     return null;
   }
 
-  printBudgetResults(results, budget || Infinity);
+  printBudgetResults(results, budget || Infinity, mode);
   return results;
+}
+
+async function runHotelSearch(params) {
+  const { destination, departDate, returnDate, adults, budget } = params;
+  const cityName = destination ? (destByIata(destination)?.name || destination) : null;
+  if (!cityName) {
+    printError('Need a destination for hotel search. Try: "hotels in Athens next August for a week"');
+    return null;
+  }
+  if (!departDate) {
+    printError('Need check-in date. Try: "hotels in Athens August 1–8"');
+    return null;
+  }
+  const checkOut = returnDate || departDate;
+
+  process.stdout.write(chalk.gray(`  Searching hotels in ${cityName}...`));
+  let hotels;
+  try {
+    hotels = await searchHotels({ city: cityName, checkIn: departDate, checkOut, adults: adults || 2, maxPrice: budget });
+    process.stdout.write('\r' + ' '.repeat(50) + '\r');
+  } catch (e) {
+    process.stdout.write('\r' + ' '.repeat(50) + '\r');
+    printError(e.message);
+    return null;
+  }
+
+  if (!hotels.length) {
+    console.log(chalk.yellow(`  No hotels found in ${cityName} for those dates.\n`));
+    return null;
+  }
+
+  console.log(chalk.bold(`\n  Hotels in ${cityName}  ${departDate} → ${checkOut}\n`));
+  hotels.slice(0, 8).forEach((h, i) => {
+    const stars  = h.stars ? '★'.repeat(Math.min(h.stars, 5)) : '';
+    const rating = h.rating ? chalk.yellow(` ${h.rating}⭐`) : '';
+    const total  = chalk.bold.magenta(` ($${h.totalPrice} total)`);
+    console.log(
+      `  ${chalk.bold(String(i + 1).padStart(2))}. ` +
+      `${chalk.bold.green(`$${h.pricePerNight}/night`.padEnd(12))}  ` +
+      `${chalk.white(h.name.slice(0, 30).padEnd(32))}  ` +
+      `${chalk.gray(stars)}${rating}${total}`
+    );
+  });
+  console.log('');
+  return hotels;
 }
 
 async function runSpecificSearch(params) {
@@ -168,7 +216,15 @@ async function main() {
       continue;
     }
 
-    // Budget scan: no destination OR has budget with no specific destination
+    // Hotel-only mode with specific destination
+    if (params.mode === 'hotels') {
+      await runHotelSearch(params);
+      const next = (await ask(chalk.gray('  [n] new search  [q] quit  > '))).trim().toLowerCase();
+      if (next === 'q') { console.log(chalk.gray('\n  Bye.\n')); rl.close(); process.exit(0); }
+      continue;
+    }
+
+    // Budget scan: no destination OR budget with no specific destination (flights or whole trip)
     const isBudgetScan = !params.destination || (params.budget && !params.destination);
     if (isBudgetScan) {
       if (!params.departDate) {
