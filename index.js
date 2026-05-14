@@ -7,7 +7,7 @@ import { rankFlights, filterGarbage } from './lib/rank.js';
 import { printBanner, printParsed, printResults, printError } from './lib/display.js';
 import { budgetScan, printBudgetResults } from './lib/budget-scan.js';
 import { searchViaHubs, printConnectionResults } from './lib/connections.js';
-import { calendarSweep, printCalendarResults } from './lib/calendar-sweep.js';
+import { calendarSweep, printCalendarResults, weekSweep, printWeekSweepResults } from './lib/calendar-sweep.js';
 import { searchHotels } from './adapters/hotels.js';
 import { destByIata } from './lib/destinations.js';
 import { runHealthCheck } from './lib/health-check.js';
@@ -199,6 +199,21 @@ async function main() {
       process.stdout.write('\r' + ' '.repeat(20) + '\r');
     } catch (e) {
       printError(`Could not understand: ${e.message}`);
+      continue;
+    }
+
+    // Week sweep: "cheapest week to fly TLV→Rome in June"
+    if (params.weekSweep && params.origin && params.destination) {
+      const results = await weekSweep({
+        origin: params.origin || 'TLV',
+        destination: params.destination,
+        monthStr: params.sweepMonth || null,
+        adults: params.adults || 1,
+        tripType: params.tripType || 'roundtrip',
+      }).catch(e => { printError(e.message); return []; });
+      printWeekSweepResults(results, params.origin || 'TLV', params.destination);
+      const next = (await ask(chalk.gray('  [n] new search  [q] quit  > '))).trim().toLowerCase();
+      if (next === 'q') { console.log(chalk.gray('\n  Bye.\n')); rl.close(); process.exit(0); }
       continue;
     }
 
