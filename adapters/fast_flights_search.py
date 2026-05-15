@@ -65,31 +65,53 @@ def main():
     max_stops   = int(args.get('maxStops', 2))
     ils_rate    = float(args.get('ilsRate', 0.2740))
 
-    # round-trip mode returns 1 result with empty fields — use one-way for full details.
-    # Prices shown are one-way (per direction); UI notes this clearly.
-    flight_data = [FlightData(date=date, from_airport=origin, to_airport=destination)]
-
-    try:
+    def fetch_leg(from_iata, to_iata, leg_date):
+        fd = [FlightData(date=leg_date, from_airport=from_iata, to_airport=to_iata)]
         result = get_flights(
-            flight_data=flight_data,
+            flight_data=fd,
             trip='one-way',
             seat='economy',
             passengers=Passengers(adults=adults),
             max_stops=max_stops,
         )
+        return result.flights or []
+
+    # For roundtrip: fetch both legs separately, combine cheapest return onto each outbound.
+    # fast-flights round-trip mode returns one combined result with no timing details.
+    try:
+        outbound_flights = fetch_leg(origin, destination, date)
     except Exception as e:
         json.dump({"error": str(e)}, sys.stdout)
         return
 
+    return_cheapest_ils = None
+    if trip == 'round-trip' and return_date:
+        try:
+            return_flights = fetch_leg(destination, origin, return_date)
+            valid_ret = [f for f in return_flights if f.name and parse_price_ils(f.price)]
+            if valid_ret:
+                return_cheapest_ils = min(parse_price_ils(f.price) for f in valid_ret)
+        except Exception:
+            pass  # no return data — fall back to outbound only
+
     flights = []
     seen = set()
 
-    for f in (result.flights or []):
+    for f in outbound_flights:
         if not f.name:
-            continue  # skip Google Flights phantom summary row (empty airline = price-only stub)
+            continue
 
         price_ils = parse_price_ils(f.price)
-        price_usd = ils_to_usd(price_ils, ils_rate)
+        if price_ils is None:
+            continue
+
+        # Add cheapest return leg for roundtrip total
+        if return_cheapest_ils is not None:
+            total_ils = price_ils + return_cheapest_ils
+        else:
+            total_ils = price_ils
+
+        price_usd = ils_to_usd(total_ils, ils_rate)
         dur_min   = parse_duration_minutes(f.duration)
         dep_time  = parse_time(f.departure)
         arr_time  = parse_time(f.arrival)
@@ -101,7 +123,7 @@ def main():
 
         flights.append({
             "price":            price_usd,
-            "price_ils":        price_ils,
+            "price_ils":        total_ils,
             "totalDuration":    dur_min,
             "stops":            f.stops if isinstance(f.stops, int) else -1,
             "airline":          f.name or '',
@@ -114,7 +136,7 @@ def main():
             "typicalLow":       None,
             "typicalHigh":      None,
             "source":           "fast-flights",
-            "isOneWay":         True,   # fast-flights one-way mode; multiply ~2 for roundtrip est.
+            "isRoundtrip":      return_cheapest_ils is not None,
         })
 
     json.dump(flights, sys.stdout, ensure_ascii=False)
